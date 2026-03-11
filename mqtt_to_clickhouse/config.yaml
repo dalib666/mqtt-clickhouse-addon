@@ -1,0 +1,39 @@
+name: "MQTT to ClickHouse"
+version: "1.0.0"
+slug: "mqtt_to_clickhouse"
+description: "Reads Home Assistant MQTT Statestream topics and writes numeric sensor values to ClickHouse."
+startup: services
+boot: auto
+init: false
+arch:
+  - amd64
+  - aarch64
+  - armv7
+options:
+  mqtt_host: "192.168.1.109"
+  mqtt_port: 1883
+  mqtt_topic: "ha_statestream/#"
+  mqtt_username: "homeassistant"
+  mqtt_password: ""
+  clickhouse_host: "192.168.1.107"
+  clickhouse_port: 8123
+  clickhouse_user: "default"
+  clickhouse_password: ""
+  clickhouse_database: "default"
+  clickhouse_table: "ha_sensor_numeric"
+  batch_size: 100
+  flush_interval_sec: 5
+schema:
+  mqtt_host: str
+  mqtt_port: port
+  mqtt_topic: str
+  mqtt_username: str?
+  mqtt_password: password?
+  clickhouse_host: str
+  clickhouse_port: port
+  clickhouse_user: str
+  clickhouse_password: password?
+  clickhouse_database: str
+  clickhouse_table: str
+  batch_size: int(1,10000)
+  flush_interval_sec: int(1,3600)
