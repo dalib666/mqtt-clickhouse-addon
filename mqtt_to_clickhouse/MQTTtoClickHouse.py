@@ -1,26 +1,26 @@
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Tuple
 
-import clickhouse_connect
 import paho.mqtt.client as mqtt
+import requests
 
 
 # =========================
 # CONFIG
 # =========================
-MQTT_HOST = os.getenv("MQTT_HOST", "127.0.0.1")
+MQTT_HOST = os.getenv("MQTT_HOST", "192.168.1.109")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
 MQTT_TOPIC = os.getenv("MQTT_TOPIC", "ha_statestream/#")
-MQTT_USERNAME = os.getenv("MQTT_USERNAME", "")
-MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "")
+MQTT_USERNAME = os.getenv("MQTT_USERNAME", "homeassistant")
+MQTT_PASSWORD = os.getenv("MQTT_PASSWORD", "ol3uuNeek6ke7eich8aiva7ZoxoiVei1aiteith0aighae0ieP7pahFaNgeiP8de")
 
-CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "127.0.0.1")
+CLICKHOUSE_HOST = os.getenv("CLICKHOUSE_HOST", "192.168.1.107")
 CLICKHOUSE_PORT = int(os.getenv("CLICKHOUSE_PORT", "8123"))
 CLICKHOUSE_USER = os.getenv("CLICKHOUSE_USER", "default")
-CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "")
+CLICKHOUSE_PASSWORD = os.getenv("CLICKHOUSE_PASSWORD", "mojeheslo")
 CLICKHOUSE_DATABASE = os.getenv("CLICKHOUSE_DATABASE", "default")
 CLICKHOUSE_TABLE = os.getenv("CLICKHOUSE_TABLE", "ha_sensor_numeric")
 
@@ -29,22 +29,42 @@ FLUSH_INTERVAL_SEC = int(os.getenv("FLUSH_INTERVAL_SEC", "5"))
 
 
 # =========================
-# CLICKHOUSE CLIENT
+# CLICKHOUSE HTTP CLIENT
 # =========================
-ch_client = clickhouse_connect.get_client(
-    host=CLICKHOUSE_HOST,
-    port=CLICKHOUSE_PORT,
-    username=CLICKHOUSE_USER,
-    password=CLICKHOUSE_PASSWORD,
-    database=CLICKHOUSE_DATABASE,
+CLICKHOUSE_SCHEME = os.getenv("CLICKHOUSE_SCHEME", "http")
+CLICKHOUSE_TIMEOUT_SEC = int(os.getenv("CLICKHOUSE_TIMEOUT_SEC", "10"))
+
+CLICKHOUSE_URL = (
+    f"{CLICKHOUSE_SCHEME}://{CLICKHOUSE_HOST}:{CLICKHOUSE_PORT}/"
 )
+http_session = requests.Session()
+
+
+def execute_clickhouse_query(query: str, data: Optional[str] = None) -> None:
+    response = http_session.post(
+        CLICKHOUSE_URL,
+        params={"database": CLICKHOUSE_DATABASE, "query": query},
+        data=data.encode("utf-8") if data is not None else None,
+        auth=(CLICKHOUSE_USER, CLICKHOUSE_PASSWORD),
+        timeout=CLICKHOUSE_TIMEOUT_SEC,
+    )
+    response.raise_for_status()
+
+
+def format_clickhouse_datetime(value: datetime) -> str:
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    else:
+        value = value.astimezone(timezone.utc)
+
+    return value.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
 def ensure_clickhouse_table() -> None:
     with clickhouse_lock:
-        ch_client.command(
+        execute_clickhouse_query(
             f"""
-            CREATE TABLE IF NOT EXISTS {CLICKHOUSE_DATABASE}.{CLICKHOUSE_TABLE} (
+            CREATE TABLE IF NOT EXISTS {CLICKHOUSE_TABLE} (
                 entity_id String,
                 last_changed DateTime64(3, 'UTC'),
                 value Float64
@@ -191,11 +211,17 @@ def flush_buffer(force: bool = False) -> None:
         last_flush_time = now
 
     try:
+        insert_payload = "\n".join(
+            f"{entity_id}\t{format_clickhouse_datetime(last_changed)}\t{value}"
+            for entity_id, last_changed, value in rows
+        )
         with clickhouse_lock:
-            ch_client.insert(
-                CLICKHOUSE_TABLE,
-                rows,
-                column_names=["entity_id", "last_changed", "value"],
+            execute_clickhouse_query(
+                (
+                    f"INSERT INTO {CLICKHOUSE_TABLE} "
+                    "(entity_id, last_changed, value) FORMAT TabSeparated"
+                ),
+                data=insert_payload,
             )
         print(f"Inserted {len(rows)} rows into ClickHouse")
     except Exception as e:
